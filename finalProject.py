@@ -4,6 +4,7 @@ import json
 import OpenVisus as ov
 import os
 from utility import convert_to_sphere
+import pickle
 
 # Set cache
 os.environ['VISUS_CACHE'] = "./visus_can_be_deleted"
@@ -169,7 +170,7 @@ render_params = {
     "relief": 0.1,
     "CO2_opacity": 0,
     "vorticity_z": 0,
-    "pathline_length": 5,
+    "pathline_length": 3,
 }
 def render():
     myMesh = getMeshes(int(render_params['time'] / 50), 1, render_params['relief'])
@@ -240,6 +241,83 @@ for face_idx, vort in enumerate(vorticities):
     #     name=f"Face {face_idx}"
     # ))
 
+
+
+### --------- Pathlines Render --------
+# Pathlines Variables
+FILENAME      = "pathline_cache/pathlines.pkl"
+SHOW_EVERY_N  = 1     # only draw every Nth trajectory for speed
+
+with open(FILENAME, "rb") as f:
+    all_pathlines = pickle.load(f)
+print(f"Loaded {len(all_pathlines)} pathlines") # Data looks like [x, y, z, t]
+
+# Sample down to keep things responsive. Not actually required right now but useful for speed.
+sampled = [
+    all_pathlines[i]
+    for i in range(0, len(all_pathlines), SHOW_EVERY_N)
+    if len(all_pathlines[i]) >= 2
+]
+
+# Helper: build PolyData showing only the last TRAIL_LENGTH points up to t
+def make_polydata(t):
+    points = []
+    lines  = []
+    offset = 0
+
+    for traj in sampled:
+        pts = np.asarray(traj, dtype=np.float32)
+        L   = pts.shape[0]
+        t_idx = max(0, min(int(t), L - 1))
+        start = max(0, t_idx - render_params["pathline_length"] + 1)
+        seg = pts[start : t_idx + 1]
+        if seg.shape[0] < 2:
+            continue
+        points.extend(seg)
+        # VTK line cell: [n_pts, id0, id1, …]
+        lines.append([seg.shape[0]] + list(range(offset, offset + seg.shape[0])))
+        offset += seg.shape[0]
+
+    if not points:
+        return pv.PolyData()
+    pts_arr  = np.asarray(points)
+    lines_arr = np.hstack(lines)
+    return pv.PolyData(pts_arr, lines=lines_arr)
+
+# Add a small offset to pathlines' coordinates to ensure they are not obscured
+# I have to do this because the sphere and lines are drawn at the same scale.
+def offset_pathlines(pathline_data, offset_value=0.01):
+    pathline_data.points[:, 0] += offset_value  # Apply small offset to X-axis (or Y/Z if necessary)
+    return pathline_data
+
+# Initial draw
+actor = pl.add_mesh(
+    offset_pathlines(make_polydata(1)),  # Apply offset
+    color="orange",
+    line_width=1
+)
+
+# Slider callback
+def slider_callback(val):
+    global actor
+    t = int(val)
+    new_poly = make_polydata(t)
+    new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
+    pl.remove_actor(actor)
+    actor = pl.add_mesh(new_poly, color="orange", line_width=1)
+
+# Add new slider widget -- im too tired to figure this out right now.. Update this to use the one below.
+# its only 51 timesteps because the dataset im using is quite small. 
+# If we want to get a bigger set we need to generate new pathlines using pathlineCreation.py
+pl.add_slider_widget(
+    callback=slider_callback,
+    rng=(0, 51, 1),
+    value=1,
+    title="Timestep",
+    pointa=(0.02, 0.05),
+    pointb=(0.98, 0.05),
+    style="modern"
+)
 
 render()
 pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
