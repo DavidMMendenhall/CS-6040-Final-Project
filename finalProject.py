@@ -50,17 +50,10 @@ for face in face_layout.keys():
             vort = np.rot90(vort, k=1)
         elif face == 1:
             vort = np.rot90(vort, k=1)
-        elif face == 2:
-            # vort = np.fliplr(vort)
-            # vort = np.rot90(vort, k=)
-            pass
         elif face == 3:
             vort = np.rot90(vort, k=2)
-            # pass
-            # vort = np.fliplr(vort)
         elif face == 4:
             vort = np.rot90(vort, k=2)
-            # pass
         elif face == 5:
             vort = np.rot90(vort, k=1)
 
@@ -71,55 +64,10 @@ for face in face_layout.keys():
 
 # Normalize vorticity for consistent color scale
 all_vorticities = np.concatenate([vort.flatten() for vort in vorticities if vort is not None])
-vorticity_min = np.min(all_vorticities)
-vorticity_max = np.max(all_vorticities)
 
 # Set color range for the colorbar between -0.3 and 0.3
 color_range_min = -0.3
 color_range_max = 0.3
-
-# Cubed-sphere projection
-def cubed_sphere_projection(face_idx, n):
-    xi = np.linspace(-np.pi / 4, np.pi / 4, n)
-    eta = np.linspace(-np.pi / 4, np.pi / 4, n)
-    xi, eta = np.meshgrid(xi, eta)
-
-    tan_xi = np.tan(xi)
-    tan_eta = np.tan(eta)
-    one = np.ones_like(tan_xi)
-
-    if face_idx == 0:  # Front (+Z)
-        x = tan_xi
-        y = tan_eta
-        z = one
-    elif face_idx == 1:  # Right (+X)
-        x = one
-        y = tan_xi
-        z = -tan_eta
-    elif face_idx == 2:  # Top (+Y)
-        x = tan_xi
-        y = one
-        z = -tan_eta
-    elif face_idx == 3:  # Back (-Z)
-        x = -tan_xi
-        y = -tan_eta
-        z = -one
-    elif face_idx == 4:  # Left (-X)
-        x = -one
-        y = -tan_xi
-        z = -tan_eta
-    elif face_idx == 5:  # Bottom (-Y)
-        x = -tan_xi
-        y = -one
-        z = -tan_eta
-    else:
-        raise ValueError("Invalid face index")
-
-    r = np.sqrt(x**2 + y**2 + z**2)
-    return x / r, y / r, z / r
-
-
-
 
 
 
@@ -176,32 +124,22 @@ def render():
     myMesh = getMeshes(int(render_params['time'] / 50), 1, render_params['relief'])
     faces = [pv.PolyData(myMesh[face][0], myMesh[face][1]) for face in range(6)]
     for face in range(6):
-        pl.add_mesh(faces[face], color="green", show_edges=False, name=f"co2_face_{face}", opacity=render_params['CO2_opacity'])
+        pl.add_mesh(faces[face], color="#00FFFF", show_edges=False, name=f"co2_face_{face}", opacity=render_params['CO2_opacity'])
+
+    new_poly = make_polydata(int(render_params['time'] / 5) + 1)
+    new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
+    pl.add_mesh(new_poly, color="#00FF00", line_width=1, name="path_lines")
 
 def updateRenderParam(value, parameter):
     render_params[parameter] = value
     render()
 
 
-# pl.add_mesh(pv.Sphere(1), color="blue")
-# ipywidgets.interact(
-#     updateCO2,
-#     time=(0, 200),
-#     relief=(0.0, 1.0, 0.1)
-# )
-
 for face_idx, vort in enumerate(vorticities):
     if vort is None:
         continue
 
     n = vort.shape[0]
-    # x, y, z = cubed_sphere_projection(face_idx, n)
-    # points = np.zeros((x.shape[0], x.shape[1] , 3), dtype=np.float32)
-    # grid = np.meshgrid((np.linspace(0.0, 0.0, 1), np.linspace(0.0, 1, n), np.linspace(0.0, 1, n)))
-    # grid = convert_to_sphere(grid, face_idx, 1, 0)
-    # x = grid[:, 0]
-    # y = grid[:, 1]
-    # z = grid[:, 2]
 
     ui = np.linspace(0.0, 1.0, n)
     vi = np.linspace(0.0, 1.0, n)
@@ -217,14 +155,11 @@ for face_idx, vort in enumerate(vorticities):
     points[:, 2] = z.flatten()
 
     points = convert_to_sphere(points, face_idx, 1, 0)
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
+    faces = np.array([[(4, (x + y * n), ((x+1) + y * n), ((x+1) + (y+1) * n), (x + (y+1) * n)) for x in range(n-1)] for y in range(n-1) ]).flatten()
+    pv_mesh = pv.PolyData(points, faces)
+    pv_mesh.point_data['vorticity'] = vort.flatten()
 
-    daMesh = pv.StructuredGrid(x, y, z)
-    # daMesh.points = points
-    daMesh.point_data['vorticity'] = vort.flatten()
-    pl.add_mesh(daMesh, clim=[-0.3, 0.3], cmap='RdBu')
+    pl.add_mesh(pv_mesh, clim=[-0.3, 0.3], cmap='RdBu')
     # fig.add_trace(go.Surface(
     #     x=x, y=y, z=z,
     #     surfacecolor=vort,
@@ -286,41 +221,19 @@ def make_polydata(t):
 
 # Add a small offset to pathlines' coordinates to ensure they are not obscured
 # I have to do this because the sphere and lines are drawn at the same scale.
-def offset_pathlines(pathline_data, offset_value=0.01):
-    pathline_data.points[:, 0] += offset_value  # Apply small offset to X-axis (or Y/Z if necessary)
+def offset_pathlines(pathline_data, offset_value=1.1):
+    pathline_data.points *= offset_value  # Apply small offset to X-axis (or Y/Z if necessary)
     return pathline_data
 
-# Initial draw
-actor = pl.add_mesh(
-    offset_pathlines(make_polydata(1)),  # Apply offset
-    color="orange",
-    line_width=1
-)
 
-# Slider callback
-def slider_callback(val):
-    global actor
-    t = int(val)
-    new_poly = make_polydata(t)
-    new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
-    pl.remove_actor(actor)
-    actor = pl.add_mesh(new_poly, color="orange", line_width=1)
-
-# Add new slider widget -- im too tired to figure this out right now.. Update this to use the one below.
 # its only 51 timesteps because the dataset im using is quite small. 
 # If we want to get a bigger set we need to generate new pathlines using pathlineCreation.py
-pl.add_slider_widget(
-    callback=slider_callback,
-    rng=(0, 51, 1),
-    value=1,
-    title="Timestep",
-    pointa=(0.02, 0.05),
-    pointb=(0.98, 0.05),
-    style="modern"
-)
+
 
 render()
-pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
+
+# pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
+pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 1000, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
 pl.add_slider_widget(lambda value: updateRenderParam(value, "relief"), pointa=(0.1, 0.8), pointb=(0.4, 0.8), rng=(0, 1), value=render_params["relief"], title="Relief", color="white", fmt="%0.2f", style="modern")
 pl.add_slider_widget(lambda value: updateRenderParam(value, "CO2_opacity"), pointa=(0.1, 0.7), pointb=(0.4, 0.7), rng=(0, 1), value=render_params["CO2_opacity"], title="CO2_opacity", color="white", fmt="%0.2f", style="modern")
 pl.show_grid()
