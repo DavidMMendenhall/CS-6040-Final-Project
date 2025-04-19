@@ -1,10 +1,8 @@
-# Creation CODE !!!
 import numpy as np
 import OpenVisus as ov
 import os
 import pickle
 from tqdm import tqdm
-# Use joblib for parallel processing (faster than multiprocessing.Pool)
 from joblib import Parallel, delayed
 
 # ------------------------------------------------------------------------------
@@ -15,15 +13,14 @@ os.environ['VISUS_CACHE'] = "./visus_can_be_deleted"
 cache_dir = "pathline_cache"
 os.makedirs(cache_dir, exist_ok=True)
 
-# Parameters (customize here)
 variable_u, variable_v = 'u', 'v'
 faces = range(6)
 base_url = "https://maritime.sealstorage.io/api/v0/s3/utah/nasa/dyamond/GEOS"
 common_params = "?access_key=any&secret_key=any&endpoint_url=https://maritime.sealstorage.io/api/v0/s3&cached=arco"
 z_level = 50
-timesteps = list(range(0, 1000, 5))   # Custom timespan; adjust as needed
+timesteps = list(range(0, 10269, 50))
 grid_shape = (48, 48)
-particles_per_face = 1000          # You may lower this for faster testing
+particles_per_face = 1000
 
 # ------------------------------------------------------------------------------
 # Utility Functions for Spherical Mapping and Particle Seeding
@@ -52,11 +49,6 @@ def compute_tangent_vectors(x, y, z):
     north = np.cross(vec, east)
     north /= np.linalg.norm(north, axis=-1, keepdims=True) + 1e-8
     return east, north
-
-def find_nearest_index(P, grid_coords):
-    diff = grid_coords - P
-    dist2 = np.sum(diff**2, axis=2)
-    return np.unravel_index(np.argmin(dist2), dist2.shape)
 
 def seed_particles():
     initial_positions = []
@@ -93,8 +85,8 @@ def preload_wind_fields(face):
     u_fields, v_fields = [], []
     for t in timesteps:
         try:
-            data_u = db_u.read(time=t, quality=-4, z=[z_level, z_level+1])[0]
-            data_v = db_v.read(time=t, quality=-4, z=[z_level, z_level+1])[0]
+            data_u = db_u.read(time=t, quality=-12, z=[z_level, z_level+1])[0]
+            data_v = db_v.read(time=t, quality=-12, z=[z_level, z_level+1])[0]
             u_fields.append(data_u)
             v_fields.append(data_v)
         except Exception as e:
@@ -123,7 +115,20 @@ def precompute_face_grids():
     return face_data
 
 # ------------------------------------------------------------------------------
-# Particle Tracking (with resolution handling)
+# Interpolation Utility
+# ------------------------------------------------------------------------------
+
+def interpolate_vector(P, grid_coords, vector_field):
+    flat_grid = grid_coords.reshape(-1, 3)
+    flat_vectors = vector_field.reshape(-1, 3)
+    dists = np.linalg.norm(flat_grid - P, axis=1)
+    weights = 1 / (dists + 1e-6)
+    weights /= weights.sum()
+    interpolated = np.sum(flat_vectors * weights[:, None], axis=0)
+    return interpolated
+
+# ------------------------------------------------------------------------------
+# Particle Tracking (with interpolated velocities)
 # ------------------------------------------------------------------------------
 
 def track_particle(P0, face, face_data, wind_fields):
@@ -131,7 +136,7 @@ def track_particle(P0, face, face_data, wind_fields):
     P = P0.copy()
     if wind_fields is None:
         return trajectory
-    # Get the precomputed grid for this face
+
     grid_coords_full, east_full, north_full = face_data[face]
     u_fields, v_fields = wind_fields
 
@@ -141,14 +146,10 @@ def track_particle(P0, face, face_data, wind_fields):
         if data_u is None or data_v is None:
             break
 
-        # Check if the resolution of wind data matches the precomputed grid.
         ny, nx = data_u.shape
         if grid_coords_full.shape[:2] != (ny, nx):
-            # Re-index the grid to the resolution of the wind data.
-            # Using np.linspace to pick indices along each axis.
             y_indices = np.linspace(0, grid_coords_full.shape[0]-1, ny).astype(int)
             x_indices = np.linspace(0, grid_coords_full.shape[1]-1, nx).astype(int)
-            # Use np.ix_ to generate a 2D index grid for multi-indexing
             grid_coords = grid_coords_full[np.ix_(y_indices, x_indices)]
             east = east_full[np.ix_(y_indices, x_indices)]
             north = north_full[np.ix_(y_indices, x_indices)]
@@ -157,29 +158,31 @@ def track_particle(P0, face, face_data, wind_fields):
             east = east_full
             north = north_full
 
-        # Compute the full 3D velocity vector using the local tangent basis.
         u3d = data_u[..., None] * east + data_v[..., None] * north
+        vel = interpolate_vector(P, grid_coords, u3d)
 
-        # Find the grid index nearest to the current particle position.
-        j, i = find_nearest_index(P, grid_coords)
-        # Adjust the particle's position (tuning of step size might help further speed).
-        P += 0.01 * u3d[j, i]
+        P += 0.01 * vel
         P /= np.linalg.norm(P)
         trajectory.append(P.copy())
     return trajectory
 
-# Precompute globals so that they are shared (read-only) in parallel processes.
+# ------------------------------------------------------------------------------
+# Main Driver
+# ------------------------------------------------------------------------------
+
+print("Precomputing global face data...")
 face_data_global = precompute_face_grids()
+print("Loading wind cache...")
 wind_cache_global = preload_all_wind_fields()
+print("Ready to track.")
 
 def process_particle(args):
     face, P0 = args
     return track_particle(P0, face, face_data_global, wind_cache_global.get(face, None))
 
 def generate_pathlines():
-    particles = seed_particles()  # List of (face, initial_position)
-    num_cores = -1  # Use all available cores
-    # Run in parallel with Joblib; global data is shared read-only.
+    particles = seed_particles()
+    num_cores = -1
     pathlines = Parallel(n_jobs=num_cores, backend="loky")(
         delayed(process_particle)(particle) for particle in tqdm(particles)
     )
