@@ -97,7 +97,7 @@ def render():
 
     new_poly = make_polydata(int(render_params['time'] / 5) + 1)
     new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
-    actor = pl.add_mesh(new_poly, color="#00FF00", line_width=1, name="path_lines")
+    actor = pl.add_mesh(new_poly, color="#00FF00", line_width=3, name="path_lines")
     actor.SetVisibility(render_params["show_path_lines"])
 
 
