@@ -40,7 +40,7 @@ for time_step in range(startTime, endTime, step):
         face_offset += mesh[1].shape[0]
         point_offset += mesh[0].shape[0]
 
-meshName = f"{variable}_{startTime}-{endTime}-{step}_{res}"
+meshName = f"./mesh_data/{variable}_{startTime}-{endTime}-{step}_{res}"
 meshPoints.tofile(f"{meshName}_mesh")
 meshFaces.tofile(f"{meshName}_faces")
 

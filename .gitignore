@@ -2,3 +2,7 @@ __pycache__/
 pathline_cache/
 venv/
 visus_can_be_deleted/
+mesh_data/*
+vort_data/*
+!mesh_data/.gitkeep
+!vort_data/.gitkeep

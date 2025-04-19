@@ -9,32 +9,6 @@ import pickle
 # Set cache
 os.environ['VISUS_CACHE'] = "./visus_can_be_deleted"
 
-# vorticity Computations ===================
-print("Computing Vorticity")
-
-# Parameters
-faces = range(6)
-base_url = "https://maritime.sealstorage.io/api/v0/s3/utah/nasa/dyamond/GEOS"
-common_params = "?access_key=any&secret_key=any&endpoint_url=https://maritime.sealstorage.io/api/v0/s3&cached=arco"
-dx, dy = 4.0, 4.0
-timestep = 100
-z_level = 50
-
-
-vorticity_db = []
-for face in range(6):
-    u_url = f"{base_url}/GEOS_U/u_face_{face}_depth_52_time_0_10269.idx{common_params}"
-    v_url = f"{base_url}/GEOS_V/v_face_{face}_depth_52_time_0_10269.idx{common_params}"
-    try:
-        db_u = ov.LoadDataset(u_url)
-        db_v = ov.LoadDataset(v_url)
-        print(db_u.shape)
-        vorticity_db.append((db_u, db_v))
-        
-    except Exception as e:
-        print(f"Face {face} error: {e}")
-
-
 # Set color range for the colorbar between -0.3 and 0.3
 color_range_min = -0.3
 color_range_max = 0.3
@@ -45,7 +19,6 @@ color_range_max = 0.3
 mesh_id = "./mesh_data/CO2_0-10269-50_-12"
 point_data = np.fromfile(f"{mesh_id}_mesh", dtype=np.float32)
 face_data = np.fromfile(f"{mesh_id}_faces", dtype=np.int32)
-face_data[0::4] = 3 # fix a bug from the compressor
 meta_data = None
 with open(f"{mesh_id}_meta.json") as file:
     meta_data = json.load(file)
@@ -77,6 +50,10 @@ def getMeshes(timeStep, radius=1, relief=0.25):
 
 myMesh = getMeshes(0)
 
+# vorticity data
+vorticity_dim = 180
+vorticity_data = np.fromfile("./vort_data/vorticities_z50_0-10269-50_180", dtype=np.float32)
+vorticity_data = vorticity_data.reshape((vorticity_data.shape[0]//(vorticity_dim * vorticity_dim), vorticity_dim, vorticity_dim))
 
 pl = pv.Plotter()
 pl.set_background("#212121")
@@ -84,46 +61,21 @@ pl.set_background("#212121")
 render_params = {
     "time": 0,
     "relief": 0.1,
-    "CO2_opacity": 0,
-    "vorticity_z": 0,
+    "CO2_opacity": 0.5,
+    "show_path_lines": True,
     "pathline_length": 3,
+
 }
 def render():
     myMesh = getMeshes(int(render_params['time'] / 50), 1, render_params['relief'])
     faces = [pv.PolyData(myMesh[face][0], myMesh[face][1]) for face in range(6)]
+    n = vorticity_dim
+    quads = np.array([[(4, (x + y * n), ((x+1) + y * n), ((x+1) + (y+1) * n), (x + (y+1) * n)) for x in range(n-1)] for y in range(n-1) ]).flatten()
 
-    vorticities = [None] * 6
     for face in range(6):
         pl.add_mesh(faces[face], color="#00FFFF", show_edges=False, name=f"co2_face_{face}", opacity=render_params['CO2_opacity'])
 
-        data_u = vorticity_db[face][0].read(time=int(render_params['time']), quality=-4, z=[z_level, z_level + 1])
-        data_v = vorticity_db[face][1].read(time=int(render_params['time']), quality=-4, z=[z_level, z_level + 1])
-        u, v = data_u[0, :, :], data_v[0, :, :]
-        dvdx = np.gradient(v, dx, axis=1)
-        dudy = np.gradient(u, dy, axis=0)
-        vort = dvdx - dudy
-
-        # Orientation corrections per face
-        if face == 0:
-            vort = np.rot90(vort, k=1)
-        elif face == 1:
-            vort = np.rot90(vort, k=1)
-        elif face == 3:
-            vort = np.rot90(vort, k=2)
-        elif face == 4:
-            vort = np.rot90(vort, k=2)
-        elif face == 5:
-            vort = np.rot90(vort, k=1)
-
-        vorticities[face] = vort
-
-
-    for face_idx, vort in enumerate(vorticities):
-        if vort is None:
-            continue
-
-        n = vort.shape[0]
-
+        
         ui = np.linspace(0.0, 1.0, n)
         vi = np.linspace(0.0, 1.0, n)
         u, v = np.meshgrid(ui, vi)
@@ -137,40 +89,22 @@ def render():
         points[:, 1] = y.flatten()
         points[:, 2] = z.flatten()
 
-        points = convert_to_sphere(points, face_idx, 1, 0)
-        faces = np.array([[(4, (x + y * n), ((x+1) + y * n), ((x+1) + (y+1) * n), (x + (y+1) * n)) for x in range(n-1)] for y in range(n-1) ]).flatten()
-        pv_mesh = pv.PolyData(points, faces)
-        pv_mesh.point_data['vorticity'] = vort.flatten()
+        points = convert_to_sphere(points, face, 1, 0)
+        pv_mesh = pv.PolyData(points, quads)
+        pv_mesh.point_data['vorticity'] = vorticity_data[(face + int(render_params['time'] / 50) * 6), :, :].flatten()
 
-        pl.add_mesh(pv_mesh, clim=[-0.3, 0.3], cmap='RdBu')
+        pl.add_mesh(pv_mesh, clim=[-0.3, 0.3], cmap='RdBu', name=f"vorticity_face_{face}")
 
     new_poly = make_polydata(int(render_params['time'] / 5) + 1)
     new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
-    pl.add_mesh(new_poly, color="#00FF00", line_width=1, name="path_lines")
+    actor = pl.add_mesh(new_poly, color="#00FF00", line_width=1, name="path_lines")
+    actor.SetVisibility(render_params["show_path_lines"])
 
 
 
 def updateRenderParam(value, parameter):
     render_params[parameter] = value
     render()
-
-
-
-    # fig.add_trace(go.Surface(
-    #     x=x, y=y, z=z,
-    #     surfacecolor=vort,
-    #     colorscale='RdBu',
-    #     cmin=color_range_min, cmax=color_range_max,  # Set color range
-    #     showscale=True,
-    #     colorbar=dict(
-    #         title="Vorticity",
-    #         tickvals=[color_range_min, 0, color_range_max],  # Show ticks at -0.3, 0, 0.3
-    #         ticktext=[str(color_range_min), "0", str(color_range_max)],
-    #         ticks="outside",
-    #         ticklen=5
-    #     ),
-    #     name=f"Face {face_idx}"
-    # ))
 
 
 
@@ -229,8 +163,9 @@ def offset_pathlines(pathline_data, offset_value=1.1):
 render()
 
 # pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
-pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 1000, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
-pl.add_slider_widget(lambda value: updateRenderParam(value, "relief"), pointa=(0.1, 0.8), pointb=(0.4, 0.8), rng=(0, 1), value=render_params["relief"], title="Relief", color="white", fmt="%0.2f", style="modern")
-pl.add_slider_widget(lambda value: updateRenderParam(value, "CO2_opacity"), pointa=(0.1, 0.7), pointb=(0.4, 0.7), rng=(0, 1), value=render_params["CO2_opacity"], title="CO2_opacity", color="white", fmt="%0.2f", style="modern")
-pl.show_grid()
+pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0, 0.9), pointb=(0.5, 0.9), rng=(0, 1000, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
+pl.add_slider_widget(lambda value: updateRenderParam(value, "relief"), pointa=(0, 0.75), pointb=(0.2, 0.75), rng=(0, 1), value=render_params["relief"], title="CO2 Relief", color="#00FFFF", fmt="%0.2f", style="modern")
+pl.add_slider_widget(lambda value: updateRenderParam(value, "CO2_opacity"), pointa=(0.0, 0.6), pointb=(0.2, 0.6), rng=(0, 1), value=render_params["CO2_opacity"], title="CO2 Opacity", color="#00FFFF", fmt="%0.2f", style="modern")
+pl.add_checkbox_button_widget(lambda value: updateRenderParam(value, "show_path_lines"), value=render_params['show_path_lines'], position=(0.1, 0.1), color_on="#00FF00")
+# pl.show_grid()
 pl.show()
