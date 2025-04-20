@@ -95,7 +95,7 @@ def render():
 
         pl.add_mesh(pv_mesh, clim=[-0.3, 0.3], cmap='RdBu', name=f"vorticity_face_{face}")
 
-    new_poly = make_polydata(int(render_params['time'] / 5) + 1)
+    new_poly = make_polydata(int(render_params['time'] / 50) + 1)
     new_poly = offset_pathlines(new_poly)  # Apply offset to updated pathlines
     actor = pl.add_mesh(new_poly, color="#00FF00", line_width=3, name="path_lines")
     actor.SetVisibility(render_params["show_path_lines"])
@@ -163,7 +163,7 @@ def offset_pathlines(pathline_data, offset_value=1.1):
 render()
 
 # pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0.1, 0.9), pointb=(0.9, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
-pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0, 0.9), pointb=(0.5, 0.9), rng=(0, 1000, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
+pl.add_slider_widget(lambda value: updateRenderParam(int(value), "time"), pointa=(0, 0.9), pointb=(0.5, 0.9), rng=(0, 10269, 1), value=render_params ["time"], title="Time", color="white", fmt="%0.0f", style="modern")
 pl.add_slider_widget(lambda value: updateRenderParam(value, "relief"), pointa=(0, 0.75), pointb=(0.2, 0.75), rng=(0, 1), value=render_params["relief"], title="CO2 Relief", color="#00FFFF", fmt="%0.2f", style="modern")
 pl.add_slider_widget(lambda value: updateRenderParam(value, "CO2_opacity"), pointa=(0.0, 0.6), pointb=(0.2, 0.6), rng=(0, 1), value=render_params["CO2_opacity"], title="CO2 Opacity", color="#00FFFF", fmt="%0.2f", style="modern")
 pl.add_checkbox_button_widget(lambda value: updateRenderParam(value, "show_path_lines"), value=render_params['show_path_lines'], position=(0.1, 0.1), color_on="#00FF00")

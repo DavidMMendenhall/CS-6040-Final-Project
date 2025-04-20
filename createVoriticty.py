@@ -1,7 +1,6 @@
 import numpy as np
 import OpenVisus as ov
 import os
-import pickle
 os.environ['VISUS_CACHE'] = "./visus_can_be_deleted"
 
 base_url = "https://maritime.sealstorage.io/api/v0/s3/utah/nasa/dyamond/GEOS"
